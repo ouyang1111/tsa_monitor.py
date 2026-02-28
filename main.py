@@ -6,92 +6,97 @@ from sklearn.linear_model import LinearRegression
 import holidays
 
 # ======================
-# 填写你的API
+# 填你的企业微信Webhook
 # ======================
 
-WEATHER_API_KEY = "填你的天气API"
-AVIATION_API_KEY = "填你的航班API"
-WECHAT_WEBHOOK = "填你的企业微信Webhook"
+WECHAT_WEBHOOK = "填你的webhook地址"
+
+TOP_AIRPORTS = ["ATL","LAX","ORD","DFW","DEN","JFK","LAS","SEA","MCO","CLT"]
 
 # ======================
-# 1. 获取天气
+# 1️⃣ 抓OpenSky数据
 # ======================
 
-def get_weather():
-    url = f"http://api.openweathermap.org/data/2.5/weather?q=New York&appid={WEATHER_API_KEY}&units=metric"
-    r = requests.get(url).json()
-    weather_score = 0
+def get_opensky_data():
+    url = "https://opensky-network.org/api/states/all"
+    r = requests.get(url)
+    data = r.json()
     
-    desc = r["weather"][0]["description"]
-    wind = r["wind"]["speed"]
+    total = len(data["states"])
+    us_count = 0
     
-    if "rain" in desc:
-        weather_score -= 1
-    if "snow" in desc:
-        weather_score -= 2
-    if wind > 10:
-        weather_score -= 1
-        
-    return weather_score, desc
-
-# ======================
-# 2. 获取航班信息
-# ======================
-
-def get_flight_data():
-    url = f"http://api.aviationstack.com/v1/flights?access_key={AVIATION_API_KEY}"
-    r = requests.get(url).json()
-    
-    total = 0
-    delay = 0
-    international = 0
-    
-    for f in r["data"]:
-        total += 1
-        
-        if f["departure"]["delay"]:
-            delay += 1
+    for s in data["states"]:
+        if s[2] and "US" in s[2]:
+            us_count += 1
             
-        if f["flight"]["iata"]:
-            if len(f["flight"]["iata"]) > 4:
-                international += 1
+    ratio = us_count / total if total else 0
     
-    delay_rate = delay / total if total else 0
-    intl_ratio = international / total if total else 0
-    
-    return delay_rate, intl_ratio
+    return total, ratio
 
 # ======================
-# 3. 节假日判断
+# 2️⃣ 抓天气
 # ======================
 
-def is_holiday():
+def get_weather_score():
+    score = 0
+    
+    for airport in TOP_AIRPORTS:
+        url = f"https://aviationweather.gov/api/data/metar?ids={airport}&format=json"
+        r = requests.get(url)
+        data = r.json()
+        
+        if not data:
+            continue
+        
+        raw = data[0].get("rawOb","")
+        
+        if "RA" in raw:
+            score -= 1
+        if "SN" in raw:
+            score -= 2
+        if "TS" in raw:
+            score -= 1
+            
+    return score
+
+# ======================
+# 3️⃣ 节假日
+# ======================
+
+def is_holiday(date):
     us_holidays = holidays.US()
-    today = datetime.date.today()
-    return 1 if today in us_holidays else 0
+    return 1 if date in us_holidays else 0
 
 # ======================
-# 4. 模拟历史TSA数据
+# 4️⃣ 模拟历史数据（你以后可替换真实TSA）
 # ======================
 
 def load_data():
-    data = pd.DataFrame({
-        "tsa":[2200000,2300000,2100000,2400000,2350000,2500000],
-        "delay":[0.1,0.15,0.2,0.05,0.08,0.12],
-        "weather":[0,-1,-2,0,0,-1],
-        "intl":[0.2,0.25,0.3,0.18,0.22,0.27],
-        "holiday":[0,0,1,0,0,1]
+    df = pd.DataFrame({
+        "tsa":[2200000,2300000,2100000,2400000,2350000,2500000,2450000,2550000,2600000,2500000],
+        "flight":[30000,32000,28000,35000,34000,36000,35500,37000,38000,36000],
+        "weather":[0,-2,-1,0,-3,0,-1,-2,0,-1],
+        "holiday":[0,0,1,0,0,1,0,0,0,0],
+        "weekday":[1,2,3,4,5,6,7,1,2,3]
     })
-    return data
+    
+    df["ma7"] = df["tsa"].rolling(7).mean()
+    df["trend"] = df["tsa"].diff()
+    df["season"] = df.index % 12
+    
+    df = df.fillna(0)
+    
+    return df
 
 # ======================
-# 5. 训练模型
+# 5️⃣ 训练模型
 # ======================
 
 def train_model():
-    data = load_data()
-    X = data[["delay","weather","intl","holiday"]]
-    y = data["tsa"]
+    df = load_data()
+    
+    X = df[["flight","weather","holiday","weekday","ma7","trend","season"]]
+    y = df["tsa"]
     
     model = LinearRegression()
     model.fit(X,y)
@@ -99,29 +104,64 @@ def train_model():
     residual = y - model.predict(X)
     std = np.std(residual)
     
-    return model,std
+    return model,std,df
 
 # ======================
-# 6. 预测
+# 6️⃣ 预测次日
 # ======================
 
-def predict():
-    delay, intl = get_flight_data()
-    weather, desc = get_weather()
-    holiday = is_holiday()
+def predict_next_day():
+    model,std,df = train_model()
     
-    model,std = train_model()
+    tomorrow = datetime.date.today() + datetime.timedelta(days=1)
     
-    X_new = np.array([[delay,weather,intl,holiday]])
+    flights,_ = get_opensky_data()
+    weather = get_weather_score()
+    holiday = is_holiday(tomorrow)
+    weekday = tomorrow.weekday()+1
+    
+    ma7 = df["tsa"].tail(7).mean()
+    trend = df["tsa"].iloc[-1] - df["tsa"].iloc[-2]
+    season = tomorrow.month
+    
+    X_new = np.array([[flights,weather,holiday,weekday,ma7,trend,season]])
+    
     pred = model.predict(X_new)[0]
-    
     lower = pred - 1.96*std
     upper = pred + 1.96*std
     
-    return pred,lower,upper,desc,delay,intl,holiday
+    return pred,lower,upper,ma7
 
 # ======================
-# 7. 企业微信推送
+# 7️⃣ 交易信号
+# ======================
+
+def trading_signal(pred,ma7):
+    diff = (pred - ma7)/ma7
+    
+    if diff > 0.03:
+        return "做多（高于趋势）"
+    elif diff < -0.03:
+        return "做空（低于趋势）"
+    else:
+        return "观望"
+
+# ======================
+# 8️⃣ 回测
+# ======================
+
+def backtest():
+    model,std,df = train_model()
+    
+    X = df[["flight","weather","holiday","weekday","ma7","trend","season"]]
+    preds = model.predict(X)
+    
+    error = np.mean(abs(preds - df["tsa"]))
+    
+    return int(error)
+
+# ======================
+# 9️⃣ 企业微信
 # ======================
 
 def send(msg):
@@ -132,24 +172,27 @@ def send(msg):
     requests.post(WECHAT_WEBHOOK,json=data)
 
 # ======================
-# 8. 主程序
+# 主程序
 # ======================
 
 def main():
-    pred,low,up,desc,delay,intl,holiday = predict()
+    pred,low,up,ma7 = predict_next_day()
+    signal = trading_signal(pred,ma7)
+    error = backtest()
     
     msg = f"""
-📊 TSA预测报告 {datetime.date.today()}
+📊 TSA交易系统
 
-天气: {desc}
-延误率: {round(delay*100,2)}%
-国际航班比例: {round(intl*100,2)}%
-是否节假日: {holiday}
-
-预测TSA: {int(pred)}
+预测次日人数: {int(pred)}
 区间: {int(low)} - {int(up)}
+
+7日均值: {int(ma7)}
+
+交易信号: {signal}
+
+模型平均误差: {error}
 """
     send(msg)
 
-if __name__=="__main__":
+if __name__ == "__main__":
     main()
