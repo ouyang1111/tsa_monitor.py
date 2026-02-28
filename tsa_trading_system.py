@@ -14,8 +14,17 @@ WECHAT_WEBHOOK = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=6a94540b-
 # 1️⃣ 获取 TSA 历史数据
 # =========================
 def get_tsa_history():
+    import pandas as pd
+    import requests
+
     url = "https://www.tsa.gov/travel/passenger-volumes"
-    tables = pd.read_html(url)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+    }
+    r = requests.get(url, headers=headers)
+    r.raise_for_status()  # 如果还有问题，会报错
+    tables = pd.read_html(r.text)
     df = tables[0]
 
     df.columns = ["date","current_year","last_year"]
