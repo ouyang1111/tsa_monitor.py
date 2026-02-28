@@ -1,8 +1,8 @@
-name: TSA
+name: TSA Trading
 
 on:
   schedule:
-    - cron: "0 10 * * *"
+    - cron: "0 8 * * *"
 
 jobs:
   run:
@@ -15,4 +15,4 @@ jobs:
         python-version: 3.9
         
     - run: pip install requests pandas numpy scikit-learn holidays
-    - run: python tsa_monitor.py
+    - run: python tsa_trading_system.py
