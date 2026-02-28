@@ -8,7 +8,8 @@ from xgboost import XGBRegressor
 from prophet import Prophet
 import holidays
 
-WECHAT_WEBHOOK = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=6a94540b-22f3-4875-9553-b633b7fda8f4
+WECHAT_WEBHOOK = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=6a94540b-22f3-4875-9553-b633b7fda8f4"
+
 # =========================
 # 1️⃣ 获取 TSA 历史数据
 # =========================
