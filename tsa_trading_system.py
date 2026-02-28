@@ -17,7 +17,7 @@ def get_tsa_history():
     import pandas as pd
     # 指定编码为 'utf-8-sig' 或 'latin1' 避免解码错误
     df = pd.read_csv("data/tsa_history.csv", encoding="utf-8-sig")
-    # 如果utf-8-sig报错, 改成 encoding="latin1"
+    # 如果utf-8-sig报错, 改成 encoding="cp1252"
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values("date").reset_index(drop=True)
     df["last_year"] = df["current_year"].shift(365)
