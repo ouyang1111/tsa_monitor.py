@@ -5,98 +5,50 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 import holidays
 
-# ======================
-# 填你的企业微信Webhook
-# ======================
-
-WECHAT_WEBHOOK = "填你的webhook地址"
-
-TOP_AIRPORTS = ["ATL","LAX","ORD","DFW","DEN","JFK","LAS","SEA","MCO","CLT"]
+WECHAT_WEBHOOK = "填你的webhook"
 
 # ======================
-# 1️⃣ 抓OpenSky数据
+# 1️⃣ 抓 TSA 官方历史数据
 # ======================
 
-def get_opensky_data():
-    url = "https://opensky-network.org/api/states/all"
-    r = requests.get(url)
-    data = r.json()
+def get_tsa_history():
+    url = "https://www.tsa.gov/travel/passenger-volumes"
+    tables = pd.read_html(url)
+    df = tables[0]
     
-    total = len(data["states"])
-    us_count = 0
+    df.columns = ["date","current_year","last_year"]
+    df["date"] = pd.to_datetime(df["date"])
+    df["current_year"] = df["current_year"].str.replace(",","").astype(int)
+    df["last_year"] = df["last_year"].str.replace(",","").astype(int)
     
-    for s in data["states"]:
-        if s[2] and "US" in s[2]:
-            us_count += 1
-            
-    ratio = us_count / total if total else 0
-    
-    return total, ratio
-
-# ======================
-# 2️⃣ 抓天气
-# ======================
-
-def get_weather_score():
-    score = 0
-    
-    for airport in TOP_AIRPORTS:
-        url = f"https://aviationweather.gov/api/data/metar?ids={airport}&format=json"
-        r = requests.get(url)
-        data = r.json()
-        
-        if not data:
-            continue
-        
-        raw = data[0].get("rawOb","")
-        
-        if "RA" in raw:
-            score -= 1
-        if "SN" in raw:
-            score -= 2
-        if "TS" in raw:
-            score -= 1
-            
-    return score
-
-# ======================
-# 3️⃣ 节假日
-# ======================
-
-def is_holiday(date):
-    us_holidays = holidays.US()
-    return 1 if date in us_holidays else 0
-
-# ======================
-# 4️⃣ 模拟历史数据（你以后可替换真实TSA）
-# ======================
-
-def load_data():
-    df = pd.DataFrame({
-        "tsa":[2200000,2300000,2100000,2400000,2350000,2500000,2450000,2550000,2600000,2500000],
-        "flight":[30000,32000,28000,35000,34000,36000,35500,37000,38000,36000],
-        "weather":[0,-2,-1,0,-3,0,-1,-2,0,-1],
-        "holiday":[0,0,1,0,0,1,0,0,0,0],
-        "weekday":[1,2,3,4,5,6,7,1,2,3]
-    })
-    
-    df["ma7"] = df["tsa"].rolling(7).mean()
-    df["trend"] = df["tsa"].diff()
-    df["season"] = df.index % 12
-    
-    df = df.fillna(0)
-    
+    df = df.sort_values("date")
     return df
 
 # ======================
-# 5️⃣ 训练模型
+# 2️⃣ 构建特征
 # ======================
 
-def train_model():
-    df = load_data()
+def prepare_data(df):
+    df["weekday"] = df["date"].dt.weekday
+    df["ma7"] = df["current_year"].rolling(7).mean()
+    df["ma30"] = df["current_year"].rolling(30).mean()
+    df["trend"] = df["current_year"].diff()
+    df["yoy"] = df["current_year"] - df["last_year"]
+    df["season"] = df["date"].dt.month
     
-    X = df[["flight","weather","holiday","weekday","ma7","trend","season"]]
-    y = df["tsa"]
+    us_holidays = holidays.US()
+    df["holiday"] = df["date"].apply(lambda x: 1 if x in us_holidays else 0)
+    
+    df = df.fillna(0)
+    return df
+
+# ======================
+# 3️⃣ 训练模型
+# ======================
+
+def train_model(df):
+    X = df[["weekday","ma7","ma30","trend","yoy","season","holiday"]]
+    y = df["current_year"]
     
     model = LinearRegression()
     model.fit(X,y)
@@ -104,27 +56,38 @@ def train_model():
     residual = y - model.predict(X)
     std = np.std(residual)
     
-    return model,std,df
+    return model,std
 
 # ======================
-# 6️⃣ 预测次日
+# 4️⃣ 预测次日
 # ======================
 
 def predict_next_day():
-    model,std,df = train_model()
+    df = get_tsa_history()
+    df = prepare_data(df)
     
-    tomorrow = datetime.date.today() + datetime.timedelta(days=1)
+    model,std = train_model(df)
     
-    flights,_ = get_opensky_data()
-    weather = get_weather_score()
-    holiday = is_holiday(tomorrow)
-    weekday = tomorrow.weekday()+1
+    last_row = df.iloc[-1]
+    tomorrow = last_row["date"] + datetime.timedelta(days=1)
     
-    ma7 = df["tsa"].tail(7).mean()
-    trend = df["tsa"].iloc[-1] - df["tsa"].iloc[-2]
+    weekday = tomorrow.weekday()
+    ma7 = df["current_year"].tail(7).mean()
+    ma30 = df["current_year"].tail(30).mean()
+    trend = df["current_year"].iloc[-1] - df["current_year"].iloc[-2]
+    
+    # 去年同日
+    last_year_same_day = df[df["date"] == (tomorrow - datetime.timedelta(days=365))]
+    if not last_year_same_day.empty:
+        yoy = df["current_year"].iloc[-1] - last_year_same_day["current_year"].values[0]
+    else:
+        yoy = 0
+    
     season = tomorrow.month
+    us_holidays = holidays.US()
+    holiday = 1 if tomorrow in us_holidays else 0
     
-    X_new = np.array([[flights,weather,holiday,weekday,ma7,trend,season]])
+    X_new = np.array([[weekday,ma7,ma30,trend,yoy,season,holiday]])
     
     pred = model.predict(X_new)[0]
     lower = pred - 1.96*std
@@ -133,35 +96,21 @@ def predict_next_day():
     return pred,lower,upper,ma7
 
 # ======================
-# 7️⃣ 交易信号
+# 5️⃣ 交易信号
 # ======================
 
 def trading_signal(pred,ma7):
     diff = (pred - ma7)/ma7
     
-    if diff > 0.03:
-        return "做多（高于趋势）"
-    elif diff < -0.03:
-        return "做空（低于趋势）"
+    if diff > 0.02:
+        return "做多"
+    elif diff < -0.02:
+        return "做空"
     else:
         return "观望"
 
 # ======================
-# 8️⃣ 回测
-# ======================
-
-def backtest():
-    model,std,df = train_model()
-    
-    X = df[["flight","weather","holiday","weekday","ma7","trend","season"]]
-    preds = model.predict(X)
-    
-    error = np.mean(abs(preds - df["tsa"]))
-    
-    return int(error)
-
-# ======================
-# 9️⃣ 企业微信
+# 6️⃣ 企业微信发送
 # ======================
 
 def send(msg):
@@ -178,20 +127,17 @@ def send(msg):
 def main():
     pred,low,up,ma7 = predict_next_day()
     signal = trading_signal(pred,ma7)
-    error = backtest()
     
     msg = f"""
-📊 TSA交易系统
+📊 TSA 次日预测系统
 
-预测次日人数: {int(pred)}
-区间: {int(low)} - {int(up)}
+预测人数: {int(pred)}
+预测区间: {int(low)} - {int(up)}
 
 7日均值: {int(ma7)}
-
 交易信号: {signal}
-
-模型平均误差: {error}
 """
+    
     send(msg)
 
 if __name__ == "__main__":
