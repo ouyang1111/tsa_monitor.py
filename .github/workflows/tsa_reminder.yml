@@ -1,0 +1,29 @@
+name: TSA量化提醒
+
+on:
+  schedule:
+    # 北京时间每天 08:00, 14:00, 20:00 -> UTC 0,6,12
+    - cron: "0 0 * * *"
+    - cron: "0 6 * * *"
+    - cron: "0 12 * * *"
+  workflow_dispatch:  # 支持手动触发测试
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v2
+
+    - name: 安装 Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.9
+
+    - name: 安装依赖
+      run: |
+        pip install requests pandas numpy scikit-learn xgboost prophet holidays lxml
+
+    - name: 运行 TSA 预测脚本
+      run: python tsa_trading_system.py
