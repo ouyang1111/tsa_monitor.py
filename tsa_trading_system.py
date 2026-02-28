@@ -14,10 +14,12 @@ WECHAT_WEBHOOK = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=6a94540b-
 # 1️⃣ 获取 TSA 历史数据（读取CSV）
 # =========================
 def get_tsa_history():
-    df = pd.read_csv("data/tsa_history.csv")  # 读取你上传的 CSV
+    import pandas as pd
+    # 指定编码为 'utf-8-sig' 或 'latin1' 避免解码错误
+    df = pd.read_csv("data/tsa_history.csv", encoding="utf-8-sig")
+    # 如果utf-8-sig报错, 改成 encoding="latin1"
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values("date").reset_index(drop=True)
-    # 自动生成去年同比列
     df["last_year"] = df["current_year"].shift(365)
     df = df.fillna(0)
     return df
